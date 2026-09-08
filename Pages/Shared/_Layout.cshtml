@@ -1,0 +1,144 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - FhirPatientApp</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/FhirPatientApp.styles.css" asp-append-version="true" />
+</head>
+<body>
+    <header>
+        <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
+            <div class="container">
+                <a class="navbar-brand fw-bold text-primary" asp-area="" asp-page="/Index">
+                    <span>&#127973;</span> FHIR App
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" 
+                        aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
+                    <ul class="navbar-nav flex-grow-1">
+                        <li class="nav-item">
+                            <a class="nav-link text-dark" asp-area="" asp-page="/Index">Home</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link text-danger fw-semibold" href="javascript:void(0);" onclick="launchBpTracker()">
+                                <span class="me-1">&#10084;&#65039;</span> Blood Tracker Page
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link text-dark" asp-area="" asp-page="/Privacy">Privacy</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Global Modal: Quick Jump to Blood Pressure Tracker -->
+    <div class="modal fade" id="bpQuickLaunchModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">&#10084;&#65039; Open Blood Pressure Tracker</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">Select a registered patient to view or log their blood pressure readings:</p>
+                    <div id="quickLaunchLoading" class="text-center py-3">
+                        <div class="spinner-border spinner-border-sm text-danger" role="status"></div>
+                        <span class="ms-2 small text-muted">Loading patient directory...</span>
+                    </div>
+                    <div id="quickLaunchList" class="list-group d-none" style="max-height: 280px; overflow-y: auto;">
+                        <!-- Populated via script -->
+                    </div>
+                    <div id="quickLaunchError" class="alert alert-warning small d-none mt-2 mb-0"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function launchBpTracker() {
+            // If the user is already on a patient details or BP page, reuse that ID directly
+            const match = window.location.pathname.match(/\/patient\/([^\/]+)/);
+            if (match && match[1]) {
+                window.location.href = `/patient/${encodeURIComponent(match[1])}/bp`;
+                return;
+            }
+
+            // Otherwise open the quick selector modal
+            const modalEl = document.getElementById('bpQuickLaunchModal');
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+
+            const loading = document.getElementById('quickLaunchLoading');
+            const list = document.getElementById('quickLaunchList');
+            const errorBox = document.getElementById('quickLaunchError');
+
+            loading.classList.remove('d-none');
+            list.classList.add('d-none');
+            errorBox.classList.add('d-none');
+            list.innerHTML = '';
+
+            try {
+                const res = await fetch('/api/fhir/Patient?_count=20&_sort=-_lastUpdated');
+                if (!res.ok) throw new Error('Could not fetch patient list');
+                const bundle = await res.json();
+                const entries = bundle.entry || [];
+
+                if (entries.length === 0) {
+                    list.innerHTML = '<div class="p-3 text-center text-muted small">No patients registered on the server.</div>';
+                } else {
+                    entries.forEach(e => {
+                        const pt = e.resource;
+                        if (!pt || !pt.id) return;
+                        const nameObj = pt.name && pt.name[0];
+                        const given = (nameObj && Array.isArray(nameObj.given)) ? nameObj.given.join(' ') : '';
+                        const family = (nameObj && nameObj.family) ? nameObj.family : '';
+                        const fullName = `${given} ${family}`.trim() || 'Unnamed Patient';
+
+                        const item = document.createElement('a');
+                        item.href = `/patient/${encodeURIComponent(pt.id)}/bp`;
+                        item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+                        item.innerHTML = `
+                            <div>
+                                <strong>${fullName}</strong>
+                                <div class="small text-muted">DOB: ${pt.birthDate || 'N/A'}</div>
+                            </div>
+                            <span class="badge bg-danger rounded-pill">Open Tracker &rarr;</span>
+                        `;
+                        list.appendChild(item);
+                    });
+                }
+                list.classList.remove('d-none');
+            } catch (err) {
+                errorBox.textContent = err.message;
+                errorBox.classList.remove('d-none');
+            } finally {
+                loading.classList.add('d-none');
+            }
+        }
+    </script>
+    <div class="container">
+        <main role="main" class="pb-3">
+            @RenderBody()
+        </main>
+    </div>
+
+    <footer class="border-top footer text-muted">
+        <div class="container">
+            &copy; 2026 - FhirPatientApp - <a asp-area="" asp-page="/Privacy">Privacy</a>
+        </div>
+    </footer>
+
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

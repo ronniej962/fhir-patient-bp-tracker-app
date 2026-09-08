@@ -1,0 +1,519 @@
+@page "/patient/{id}/bp"
+@model FhirPatientApp.Pages.PatientBpModel
+@{
+    ViewData["Title"] = "Blood Pressure Tracker";
+}
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<div class="container py-4">
+    <!-- Breadcrumb / Back Navigation -->
+    <div class="mb-3 d-flex justify-content-between align-items-center">
+        <a href="/patient/@Model.Id" class="btn btn-outline-secondary btn-sm">
+            &larr; Back to Patient Overview
+        </a>
+        <span class="badge bg-light text-dark border">Patient ID: @Model.Id</span>
+    </div>
+
+    <!-- Alert / Status Banner -->
+    <div id="alertBox" class="alert alert-danger d-none alert-dismissible fade show" role="alert">
+        <span id="alertMessage"></span>
+        <button type="button" class="btn-close" onclick="hideAlert()"></button>
+    </div>
+
+    <div id="successBox" class="alert alert-success d-none alert-dismissible fade show" role="alert">
+        <span id="successMessage"></span>
+        <button type="button" class="btn-close" onclick="hideSuccess()"></button>
+    </div>
+
+    <!-- Header -->
+    <div class="d-flex align-items-center justify-content-between mb-4 pb-2 border-bottom">
+        <div>
+            <h2 class="h3 mb-0 text-danger d-flex align-items-center gap-2">
+                <span>&#10084;&#65039;</span> Blood Pressure Tracker
+            </h2>
+            <small class="text-muted" id="patientSubHeader">Loading patient details...</small>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- LEFT COLUMN: Log Reading Form -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">Record New Reading</h5>
+                </div>
+                <div class="card-body">
+                    <form id="bpForm" onsubmit="handleBpSubmit(event)" novalidate>
+                        <div class="mb-3">
+                            <label for="systolicInput" class="form-label fw-semibold">
+                                Systolic (mmHg) <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" class="form-control form-control-lg" id="systolicInput" 
+                                   min="50" max="300" required placeholder="e.g., 120">
+                            <div class="form-text">Upper number (pressure while heart beats).</div>
+                            <div class="invalid-feedback">Enter a systolic value between 50 and 300.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="diastolicInput" class="form-label fw-semibold">
+                                Diastolic (mmHg) <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" class="form-control form-control-lg" id="diastolicInput" 
+                                   min="30" max="200" required placeholder="e.g., 80">
+                            <div class="form-text">Lower number (pressure while heart rests).</div>
+                            <div class="invalid-feedback">Enter a diastolic value between 30 and 200.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="dateInput" class="form-label fw-semibold">
+                                Measurement Date & Time <span class="text-danger">*</span>
+                            </label>
+                            <input type="datetime-local" class="form-control" id="dateInput" required>
+                            <div class="invalid-feedback">Select a valid timestamp.</div>
+                        </div>
+
+                        <button type="submit" id="saveBpBtn" class="btn btn-danger w-100 py-2 fw-semibold">
+                            Save Reading to FHIR
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- AHA BP Categories Card Guide -->
+            <div class="card shadow-sm border-0 mt-4">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0 text-muted small text-uppercase fw-bold">Classification Guide (AHA)</h6>
+                </div>
+                <ul class="list-group list-group-flush small">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Normal
+                        <span class="badge bg-success">&lt; 120 and &lt; 80</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Elevated
+                        <span class="badge bg-warning text-dark">120-129 and &lt; 80</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Hypertension Stage 1
+                        <span class="badge bg-orange text-white" style="background-color: #fd7e14;">130-139 or 80-89</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Hypertension Stage 2
+                        <span class="badge bg-danger">&ge; 140 or &ge; 90</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Chart & Log Table -->
+        <div class="col-lg-8">
+            <!-- Trend Line Chart -->
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Blood Pressure History Trend</h5>
+                    <span class="badge bg-secondary" id="readingCountBadge">0 readings</span>
+                </div>
+                <div class="card-body">
+                    <div style="position: relative; height: 300px;">
+                        <canvas id="bpHistoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Entries Table -->
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">All Recorded Entries</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date & Time</th>
+                                    <th>Systolic</th>
+                                    <th>Diastolic</th>
+                                    <th>Classification</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bpTableBody">
+                                <tr>
+                                    <td colspan="5" class="text-center py-4 text-muted">
+                                        <div class="spinner-border spinner-border-sm text-secondary me-2"></div>
+                                        Fetching readings from FHIR server...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    const patientId = "@Model.Id";
+    const PROXY_BASE = '/api/fhir';
+    let chartInstance = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        // Set default date picker to local current time
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById('dateInput').value = now.toISOString().slice(0, 16);
+
+        fetchPatientHeader();
+        fetchBpReadings();
+    });
+
+    // -------------------------------------------------------------
+    // 1. Fetch Patient Header Info
+    // -------------------------------------------------------------
+    async function fetchPatientHeader() {
+        try {
+            const res = await fetch(`${PROXY_BASE}/Patient/${encodeURIComponent(patientId)}`);
+            if (!res.ok) return;
+            const pt = await res.json();
+            const nameObj = (pt.name && pt.name.length > 0) ? pt.name[0] : null;
+            const given = (nameObj && Array.isArray(nameObj.given)) ? nameObj.given.join(' ') : '';
+            const family = (nameObj && nameObj.family) ? nameObj.family : '';
+            const fullName = `${given} ${family}`.trim() || 'Patient';
+            document.getElementById('patientSubHeader').textContent = 
+                `Tracking records for ${fullName} (${pt.gender || 'Unknown gender'}, DOB: ${pt.birthDate || 'N/A'})`;
+        } catch {
+            // Keep default subheader text if patient lookup fails
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 2. Fetch All Blood Pressure Observations
+    // -------------------------------------------------------------
+    async function fetchBpReadings() {
+        hideAlert();
+        try {
+            // Search observations with LOINC 85354-9 (BP panel) or vital-signs category
+            const url = `${PROXY_BASE}/Observation?patient=${encodeURIComponent(patientId)}&code=http://loinc.org|85354-9&_sort=date&_count=100`;
+            const response = await fetch(url, {
+                headers: { 'Accept': 'application/fhir+json, application/json' }
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Server returned ${response.status}: ${errText}`);
+            }
+
+            const bundle = await response.json();
+            renderBpData(bundle);
+        } catch (err) {
+            showAlert(`Unable to load blood pressure readings: ${err.message}`);
+        }
+    }
+
+    function renderBpData(bundle) {
+        const entries = bundle.entry || [];
+        const observations = entries.map(e => e.resource).filter(Boolean);
+        const readings = [];
+
+        observations.forEach(obs => {
+            const dateStr = obs.effectiveDateTime || obs.effectivePeriod?.start || obs.issued;
+            if (!dateStr) return;
+
+            let sysVal = null;
+            let diaVal = null;
+
+            if (obs.component && obs.component.length > 0) {
+                obs.component.forEach(comp => {
+                    const cCode = comp.code?.coding?.[0]?.code;
+                    const val = comp.valueQuantity?.value;
+                    if (cCode === '8480-6' && val != null) sysVal = Number(val);
+                    if (cCode === '8462-4' && val != null) diaVal = Number(val);
+                });
+            }
+
+            if (sysVal != null && diaVal != null) {
+                readings.push({
+                    id: obs.id,
+                    date: dateStr,
+                    displayDate: formatDate(dateStr),
+                    systolic: sysVal,
+                    diastolic: diaVal,
+                    status: obs.status || 'final'
+                });
+            }
+        });
+
+        // Chronological order for chart
+        readings.sort((a, b) => new Date(a.date) - new Date(b.date));
+        renderChart(readings);
+
+        // Reverse chronological order for table
+        const tableReadings = [...readings].sort((a, b) => new Date(b.date) - new Date(a.date));
+        renderTable(tableReadings);
+
+        document.getElementById('readingCountBadge').textContent = `${readings.length} reading${readings.length === 1 ? '' : 's'}`;
+    }
+
+    // -------------------------------------------------------------
+    // 3. Render Trend Chart
+    // -------------------------------------------------------------
+    function renderChart(readings) {
+        const ctx = document.getElementById('bpHistoryChart').getContext('2d');
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: readings.map(r => r.displayDate),
+                datasets: [
+                    {
+                        label: 'Systolic',
+                        data: readings.map(r => r.systolic),
+                        borderColor: '#dc3545',
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        tension: 0.25,
+                        fill: false,
+                        pointRadius: 4
+                    },
+                    {
+                        label: 'Diastolic',
+                        data: readings.map(r => r.diastolic),
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        tension: 0.25,
+                        fill: false,
+                        pointRadius: 4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        title: { display: true, text: 'mmHg' },
+                        suggestedMin: 50,
+                        suggestedMax: 160
+                    }
+                }
+            }
+        });
+    }
+
+    // -------------------------------------------------------------
+    // 4. Render Table
+    // -------------------------------------------------------------
+    function renderTable(readings) {
+        const tbody = document.getElementById('bpTableBody');
+        tbody.innerHTML = '';
+
+        if (readings.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">No blood pressure readings recorded yet.</td></tr>`;
+            return;
+        }
+
+        readings.forEach(r => {
+            const tr = document.createElement('tr');
+            const category = classifyBp(r.systolic, r.diastolic);
+
+            tr.innerHTML = `
+                <td>${escapeHtml(r.displayDate)}</td>
+                <td><strong class="text-danger">${r.systolic}</strong> <span class="small text-muted">mmHg</span></td>
+                <td><strong class="text-primary">${r.diastolic}</strong> <span class="small text-muted">mmHg</span></td>
+                <td><span class="badge ${category.badgeClass}">${escapeHtml(category.label)}</span></td>
+                <td><span class="badge bg-light text-dark border">${escapeHtml(r.status)}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // -------------------------------------------------------------
+    // 5. Submit New FHIR Observation via Proxy
+    // -------------------------------------------------------------
+    async function handleBpSubmit(event) {
+        event.preventDefault();
+        const form = document.getElementById('bpForm');
+
+        if (!form.checkValidity()) {
+            event.stopPropagation();
+            form.classList.add('was-validated');
+            return;
+        }
+
+        const sysVal = parseFloat(document.getElementById('systolicInput').value);
+        const diaVal = parseFloat(document.getElementById('diastolicInput').value);
+        const dateVal = document.getElementById('dateInput').value;
+
+        // Construct compliant FHIR R4 Blood Pressure Observation
+        const fhirBpObservation = {
+            resourceType: "Observation",
+            status: "final",
+            category: [
+                {
+                    coding: [
+                        {
+                            system: "http://terminology.hl7.org/CodeSystem/observation-category",
+                            code: "vital-signs",
+                            display: "Vital Signs"
+                        }
+                    ]
+                }
+            ],
+            code: {
+                coding: [
+                    {
+                        system: "http://loinc.org",
+                        code: "85354-9",
+                        display: "Blood pressure panel with all children optional"
+                    }
+                ],
+                text: "Blood pressure"
+            },
+            subject: {
+                reference: `Patient/${patientId}`
+            },
+            effectiveDateTime: new Date(dateVal).toISOString(),
+            component: [
+                {
+                    code: {
+                        coding: [
+                            {
+                                system: "http://loinc.org",
+                                code: "8480-6",
+                                display: "Systolic blood pressure"
+                            }
+                        ]
+                    },
+                    valueQuantity: {
+                        value: sysVal,
+                        unit: "mmHg",
+                        system: "http://unitsofmeasure.org",
+                        code: "mm[Hg]"
+                    }
+                },
+                {
+                    code: {
+                        coding: [
+                            {
+                                system: "http://loinc.org",
+                                code: "8462-4",
+                                display: "Diastolic blood pressure"
+                            }
+                        ]
+                    },
+                    valueQuantity: {
+                        value: diaVal,
+                        unit: "mmHg",
+                        system: "http://unitsofmeasure.org",
+                        code: "mm[Hg]"
+                    }
+                }
+            ]
+        };
+
+        const saveBtn = document.getElementById('saveBpBtn');
+        saveBtn.disabled = true;
+        saveBtn.innerText = 'Saving to FHIR...';
+        hideAlert();
+        hideSuccess();
+
+        try {
+            const response = await fetch(`${PROXY_BASE}/Observation`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/fhir+json',
+                    'Accept': 'application/fhir+json, application/json'
+                },
+                body: JSON.stringify(fhirBpObservation)
+            });
+
+            if (!response.ok) {
+                const errPayload = await response.text();
+                throw new Error(`Server returned ${response.status}: ${errPayload}`);
+            }
+
+            // Reset form inputs (keep date fresh)
+            document.getElementById('systolicInput').value = '';
+            document.getElementById('diastolicInput').value = '';
+            form.classList.remove('was-validated');
+
+            showSuccess('Blood pressure reading successfully recorded!');
+            // Refresh table and chart
+            await fetchBpReadings();
+        } catch (err) {
+            showAlert(`Failed to record reading: ${err.message}`);
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.innerText = 'Save Reading to FHIR';
+        }
+    }
+
+    // -------------------------------------------------------------
+    // AHA Classification Helper
+    // -------------------------------------------------------------
+    function classifyBp(sys, dia) {
+        if (sys >= 140 || dia >= 90) {
+            return { label: 'Hypertension Stage 2', badgeClass: 'bg-danger' };
+        }
+        if ((sys >= 130 && sys <= 139) || (dia >= 80 && dia <= 89)) {
+            return { label: 'Hypertension Stage 1', badgeClass: 'bg-warning text-dark' };
+        }
+        if (sys >= 120 && sys <= 129 && dia < 80) {
+            return { label: 'Elevated', badgeClass: 'bg-info text-dark' };
+        }
+        if (sys < 120 && dia < 80) {
+            return { label: 'Normal', badgeClass: 'bg-success' };
+        }
+        return { label: 'Unclassified', badgeClass: 'bg-secondary' };
+    }
+
+    // -------------------------------------------------------------
+    // Formatting & Utility Functions
+    // -------------------------------------------------------------
+    function formatDate(raw) {
+        if (!raw) return '';
+        const d = new Date(raw);
+        if (isNaN(d.getTime())) return raw;
+        return d.toLocaleDateString(undefined, { 
+            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
+        });
+    }
+
+    function showAlert(msg) {
+        const box = document.getElementById('alertBox');
+        document.getElementById('alertMessage').textContent = msg;
+        box.classList.remove('d-none');
+    }
+
+    function hideAlert() {
+        document.getElementById('alertBox').classList.add('d-none');
+    }
+
+    function showSuccess(msg) {
+        const box = document.getElementById('successBox');
+        document.getElementById('successMessage').textContent = msg;
+        box.classList.remove('d-none');
+        setTimeout(() => hideSuccess(), 4000);
+    }
+
+    function hideSuccess() {
+        document.getElementById('successBox').classList.add('d-none');
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+</script>
+}

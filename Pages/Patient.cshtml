@@ -1,0 +1,566 @@
+@page "/patient/{id}"
+@model FhirPatientApp.Pages.PatientModel
+@{
+    ViewData["Title"] = "Patient Details";
+}
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<div class="container py-4">
+    <!-- Back Button -->
+    <div class="mb-3">
+        <a href="/" class="btn btn-outline-secondary btn-sm">
+            &larr; Back to Patient Directory
+        </a>
+    </div>
+
+    <!-- Alert / Error Banner -->
+    <div id="alertBox" class="alert alert-danger d-none alert-dismissible fade show" role="alert">
+        <span id="alertMessage"></span>
+        <button type="button" class="btn-close" onclick="hideAlert()"></button>
+    </div>
+
+    <!-- Global Loading State -->
+    <div id="loadingState" class="text-center py-5">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading patient records...</span>
+        </div>
+        <p class="mt-2 text-muted">Retrieving patient data, vitals, conditions, and medications...</p>
+    </div>
+
+    <!-- Main Content (Hidden until loaded) -->
+    <div id="mainContent" class="d-none">
+        
+        <!-- 1. Demographics Card -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-3">
+                    <h5 class="mb-0 text-dark">Patient Demographics</h5>
+                    <a id="btnBpTracker" href="#" class="btn btn-outline-danger btn-sm">
+                        <i class="bi bi-heart-pulse"></i> Open Blood Pressure Tracker &rarr;
+                    </a>
+                </div>
+                <span class="text-muted small">Patient ID: <code id="displayId" class="text-dark"></code></span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label text-muted small text-uppercase fw-semibold mb-1">Full Name</label>
+                        <div id="displayName" class="fs-5 fw-bold text-dark">--</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label text-muted small text-uppercase fw-semibold mb-1">Gender</label>
+                        <div><span id="displayGender" class="badge">--</span></div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label text-muted small text-uppercase fw-semibold mb-1">Date of Birth</label>
+                        <div id="displayBirthDate" class="fs-5 text-dark">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Vitals Section with Chart/Table Toggle -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                <h5 class="mb-0">Vital Signs & Biometrics</h5>
+                <div class="btn-group" role="group" aria-label="View toggle">
+                    <button type="button" class="btn btn-sm btn-primary" id="btnViewCharts" onclick="setViewMode('charts')">
+                        Chart View
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="btnViewTable" onclick="setViewMode('table')">
+                        Table View
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Charts Grid View -->
+                <div id="vitalsChartView">
+                    <div class="row g-4" id="chartsContainer">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Tabular Grid View -->
+                <div id="vitalsTableView" class="d-none">
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date / Timestamp</th>
+                                    <th>Vital Sign</th>
+                                    <th>Value</th>
+                                    <th>Unit</th>
+                                </tr>
+                            </thead>
+                            <tbody id="vitalsTableBody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Clinical Summary: Conditions and Medications Side-by-Side -->
+        <div class="row g-4">
+            <!-- Active Conditions -->
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-light">
+                        <h5 class="mb-0">Recorded Conditions</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Condition Name</th>
+                                        <th>Onset Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="conditionsTableBody">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Medication Requests -->
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-light">
+                        <h5 class="mb-0">Medications</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Medication</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="medicationsTableBody">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    const patientId = "@Model.Id";
+    const PROXY_BASE = '/api/fhir';
+
+    // Track Chart.js instances so they can be re-rendered cleanly
+    const chartInstances = [];
+
+    // Vital signs definitions
+    const SINGLE_VITALS = [
+        { code: '8867-4',  label: 'Heart Rate',          color: '#dc3545', unit: 'bpm' },
+        { code: '8310-5',  label: 'Body Temperature',    color: '#fd7e14', unit: '°C / °F' },
+        { code: '9279-1',  label: 'Respiratory Rate',     color: '#20c997', unit: 'breaths/min' },
+        { code: '59408-5', label: 'Oxygen Saturation',   color: '#0dcaf0', unit: '%' },
+        { code: '8302-2',  label: 'Body Height',         color: '#6f42c1', unit: 'cm / in' },
+        { code: '29463-7', label: 'Body Weight',         color: '#0d6efd', unit: 'kg / lbs' },
+        { code: '39156-5', label: 'Body Mass Index',     color: '#6c757d', unit: 'kg/m²' }
+    ];
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadAllPatientData(patientId);
+    });
+
+    // -------------------------------------------------------------
+    // Parallel Fetch Orchestrator
+    // -------------------------------------------------------------
+    async function loadAllPatientData(id) {
+        showLoading(true);
+        hideAlert();
+
+        try {
+            const [patientRes, vitalsRes, conditionsRes, medsRes] = await Promise.all([
+                fetch(`${PROXY_BASE}/Patient/${encodeURIComponent(id)}`, { headers: { 'Accept': 'application/fhir+json, application/json' } }),
+                fetch(`${PROXY_BASE}/Observation?patient=${encodeURIComponent(id)}&category=vital-signs&_sort=date&_count=250`, { headers: { 'Accept': 'application/fhir+json, application/json' } }),
+                fetch(`${PROXY_BASE}/Condition?patient=${encodeURIComponent(id)}&_sort=-recorded-date`, { headers: { 'Accept': 'application/fhir+json, application/json' } }),
+                fetch(`${PROXY_BASE}/MedicationRequest?patient=${encodeURIComponent(id)}&_sort=-authoredon`, { headers: { 'Accept': 'application/fhir+json, application/json' } })
+            ]);
+
+            if (!patientRes.ok) throw new Error(`Patient lookup failed (${patientRes.status})`);
+            const patientData = await patientRes.json();
+            renderDemographics(patientData);
+
+            if (vitalsRes.ok) {
+                const vitalsBundle = await vitalsRes.json();
+                renderVitals(vitalsBundle);
+            }
+
+            if (conditionsRes.ok) {
+                const conditionsBundle = await conditionsRes.json();
+                renderConditions(conditionsBundle);
+            }
+
+            if (medsRes.ok) {
+                const medsBundle = await medsRes.json();
+                renderMedications(medsBundle);
+            }
+
+            document.getElementById('mainContent').classList.remove('d-none');
+        } catch (err) {
+            showAlert(`Failed loading patient records: ${err.message}`);
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 1. Render Demographics
+    // -------------------------------------------------------------
+    function renderDemographics(patient) {
+        const nameObj = (patient.name && patient.name.length > 0) ? patient.name[0] : null;
+        const given = (nameObj && Array.isArray(nameObj.given)) ? nameObj.given.join(' ') : '';
+        const family = (nameObj && nameObj.family) ? nameObj.family : '';
+        const fullName = `${given} ${family}`.trim() || 'Unnamed';
+
+        const rawGender = patient.gender || 'unknown';
+        const displayGender = rawGender.charAt(0).toUpperCase() + rawGender.slice(1);
+        const birthDate = patient.birthDate || 'Not recorded';
+
+        document.getElementById('displayId').textContent = patient.id || 'N/A';
+        document.getElementById('displayName').textContent = fullName;
+        document.getElementById('displayBirthDate').textContent = birthDate;
+        document.getElementById('btnBpTracker').href = `/patient/${encodeURIComponent(patient.id)}/bp`;
+
+        const badge = document.getElementById('displayGender');
+        badge.textContent = displayGender;
+        badge.className = `badge ${getGenderBadgeClass(rawGender)}`;
+    }
+
+    // -------------------------------------------------------------
+    // 2. Parse and Render Vitals (Charts & Table)
+    // -------------------------------------------------------------
+    function renderVitals(bundle) {
+        const entries = bundle.entry || [];
+        const observations = entries.map(e => e.resource).filter(Boolean);
+
+        // Data buckets
+        const singleDataMap = {};
+        SINGLE_VITALS.forEach(v => singleDataMap[v.code] = []);
+        const bpData = []; // { date, displayDate, systolic, diastolic }
+        const flatTableRows = [];
+
+        observations.forEach(obs => {
+            const dateStr = obs.effectiveDateTime || obs.effectivePeriod?.start || obs.issued;
+            if (!dateStr) return;
+            const displayDate = formatDate(dateStr);
+
+            // Check for Blood Pressure Panel or component BP
+            const mainCode = obs.code?.coding?.[0]?.code;
+            let sysVal = null;
+            let diaVal = null;
+
+            if (obs.component && obs.component.length > 0) {
+                obs.component.forEach(comp => {
+                    const cCode = comp.code?.coding?.[0]?.code;
+                    const val = comp.valueQuantity?.value;
+                    const u = comp.valueQuantity?.unit || 'mmHg';
+
+                    if (cCode === '8480-6' && val != null) sysVal = val;
+                    if (cCode === '8462-4' && val != null) diaVal = val;
+
+                    if (val != null) {
+                        flatTableRows.push({
+                            date: dateStr,
+                            displayDate,
+                            name: comp.code?.coding?.[0]?.display || comp.code?.text || (cCode === '8480-6' ? 'Systolic Blood Pressure' : 'Diastolic Blood Pressure'),
+                            value: val,
+                            unit: u
+                        });
+                    }
+                });
+
+                if (sysVal != null || diaVal != null) {
+                    bpData.push({ date: dateStr, displayDate, systolic: sysVal, diastolic: diaVal });
+                }
+            }
+
+            // Check single value vitals
+            if (obs.valueQuantity && obs.valueQuantity.value != null) {
+                const val = obs.valueQuantity.value;
+                const unit = obs.valueQuantity.unit || '';
+                const codeMatch = SINGLE_VITALS.find(v => v.code === mainCode);
+
+                if (codeMatch) {
+                    singleDataMap[mainCode].push({ date: dateStr, displayDate, value: val, unit });
+                }
+
+                flatTableRows.push({
+                    date: dateStr,
+                    displayDate,
+                    name: obs.code?.coding?.[0]?.display || obs.code?.text || codeMatch?.label || 'Vital Sign',
+                    value: val,
+                    unit: unit
+                });
+            }
+        });
+
+        // Chronological sort
+        Object.keys(singleDataMap).forEach(k => {
+            singleDataMap[k].sort((a, b) => new Date(a.date) - new Date(b.date));
+        });
+        bpData.sort((a, b) => new Date(a.date) - new Date(b.date));
+        flatTableRows.sort((a, b) => new Date(b.date) - new Date(a.date)); // descending for table
+
+        // Render Table Rows (without LOINC column)
+        const tbody = document.getElementById('vitalsTableBody');
+        tbody.innerHTML = '';
+        if (flatTableRows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="text-center py-3 text-muted">No vital signs recorded.</td></tr>`;
+        } else {
+            flatTableRows.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${escapeHtml(row.displayDate)}</td>
+                    <td><strong>${escapeHtml(row.name)}</strong></td>
+                    <td>${escapeHtml(row.value.toString())}</td>
+                    <td><span class="text-muted small">${escapeHtml(row.unit)}</span></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Render Charts Grid
+        renderVitalsCharts(bpData, singleDataMap);
+    }
+
+    function renderVitalsCharts(bpData, singleDataMap) {
+        const container = document.getElementById('chartsContainer');
+        container.innerHTML = '';
+
+        // Destroy previous Chart.js instances to prevent canvas memory leaks
+        chartInstances.forEach(c => c.destroy());
+        chartInstances.length = 0;
+
+        // 1. Blood Pressure Dual-Series Chart
+        const bpCol = document.createElement('div');
+        bpCol.className = 'col-lg-6';
+        bpCol.innerHTML = `
+            <div class="border rounded p-3 bg-white h-100 shadow-sm">
+                <h6 class="fw-bold mb-2">Blood Pressure</h6>
+                <div style="position: relative; height: 230px;">
+                    <canvas id="chart-bp"></canvas>
+                </div>
+            </div>
+        `;
+        container.appendChild(bpCol);
+
+        const bpCtx = document.getElementById('chart-bp').getContext('2d');
+        const bpChart = new Chart(bpCtx, {
+            type: 'line',
+            data: {
+                labels: bpData.map(d => d.displayDate),
+                datasets: [
+                    {
+                        label: 'Systolic',
+                        data: bpData.map(d => d.systolic),
+                        borderColor: '#dc3545',
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        tension: 0.25,
+                        fill: false
+                    },
+                    {
+                        label: 'Diastolic',
+                        data: bpData.map(d => d.diastolic),
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        tension: 0.25,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { title: { display: true, text: 'mmHg' } } }
+            }
+        });
+        chartInstances.push(bpChart);
+
+        // 2. Render Single Series Line Charts
+        SINGLE_VITALS.forEach(cfg => {
+            const dataPoints = singleDataMap[cfg.code] || [];
+            const col = document.createElement('div');
+            col.className = 'col-lg-6';
+            const canvasId = `chart-${cfg.code}`;
+
+            col.innerHTML = `
+                <div class="border rounded p-3 bg-white h-100 shadow-sm">
+                    <h6 class="fw-bold mb-2">${escapeHtml(cfg.label)}</h6>
+                    <div style="position: relative; height: 230px;">
+                        <canvas id="${canvasId}"></canvas>
+                    </div>
+                </div>
+            `;
+            container.appendChild(col);
+
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dataPoints.map(d => d.displayDate),
+                    datasets: [{
+                        label: cfg.label,
+                        data: dataPoints.map(d => d.value),
+                        borderColor: cfg.color,
+                        backgroundColor: cfg.color + '20',
+                        tension: 0.25,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { title: { display: true, text: cfg.unit } }
+                    }
+                }
+            });
+            chartInstances.push(chart);
+        });
+    }
+
+    // -------------------------------------------------------------
+    // 3. Render Conditions
+    // -------------------------------------------------------------
+    function renderConditions(bundle) {
+        const tbody = document.getElementById('conditionsTableBody');
+        tbody.innerHTML = '';
+        const entries = bundle.entry || [];
+
+        if (entries.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="2" class="text-center py-3 text-muted">No conditions found.</td></tr>`;
+            return;
+        }
+
+        entries.forEach(e => {
+            const cond = e.resource;
+            if (!cond) return;
+
+            const name = cond.code?.coding?.[0]?.display || cond.code?.text || 'Unspecified Condition';
+            const onset = cond.onsetDateTime || cond.onsetPeriod?.start || cond.recordedDate || 'Unknown';
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${escapeHtml(name)}</strong></td>
+                <td>${escapeHtml(formatDate(onset))}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // -------------------------------------------------------------
+    // 4. Render Medications
+    // -------------------------------------------------------------
+    function renderMedications(bundle) {
+        const tbody = document.getElementById('medicationsTableBody');
+        tbody.innerHTML = '';
+        const entries = bundle.entry || [];
+
+        if (entries.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="2" class="text-center py-3 text-muted">No medications found.</td></tr>`;
+            return;
+        }
+
+        entries.forEach(e => {
+            const med = e.resource;
+            if (!med) return;
+
+            const medName = med.medicationCodeableConcept?.coding?.[0]?.display 
+                         || med.medicationCodeableConcept?.text 
+                         || med.medicationReference?.display 
+                         || 'Unspecified Medication';
+
+            const status = med.status || 'unknown';
+            const statusBadge = status === 'active' ? 'bg-success' : 'bg-secondary';
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${escapeHtml(medName)}</strong></td>
+                <td><span class="badge ${statusBadge}">${escapeHtml(status)}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // -------------------------------------------------------------
+    // View Toggle & Utility Functions
+    // -------------------------------------------------------------
+    function setViewMode(mode) {
+        const chartView = document.getElementById('vitalsChartView');
+        const tableView = document.getElementById('vitalsTableView');
+        const btnCharts = document.getElementById('btnViewCharts');
+        const btnTable = document.getElementById('btnViewTable');
+
+        if (mode === 'charts') {
+            chartView.classList.remove('d-none');
+            tableView.classList.add('d-none');
+            btnCharts.className = 'btn btn-sm btn-primary';
+            btnTable.className = 'btn btn-sm btn-outline-primary';
+        } else {
+            chartView.classList.add('d-none');
+            tableView.classList.remove('d-none');
+            btnCharts.className = 'btn btn-sm btn-outline-primary';
+            btnTable.className = 'btn btn-sm btn-primary';
+        }
+    }
+
+    function formatDate(raw) {
+        if (!raw) return '';
+        const d = new Date(raw);
+        if (isNaN(d.getTime())) return raw;
+        return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function getGenderBadgeClass(gender) {
+        switch ((gender || '').toLowerCase()) {
+            case 'male': return 'bg-primary';
+            case 'female': return 'bg-danger-subtle text-danger border border-danger-subtle';
+            case 'other': return 'bg-info text-dark';
+            default: return 'bg-secondary';
+        }
+    }
+
+    function showLoading(isLoading) {
+        document.getElementById('loadingState').classList.toggle('d-none', !isLoading);
+    }
+
+    function showAlert(msg) {
+        const alertBox = document.getElementById('alertBox');
+        document.getElementById('alertMessage').textContent = msg;
+        alertBox.classList.remove('d-none');
+    }
+
+    function hideAlert() {
+        document.getElementById('alertBox').classList.add('d-none');
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+</script>
+}

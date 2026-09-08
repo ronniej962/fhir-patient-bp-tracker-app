@@ -1,0 +1,101 @@
+﻿@page
+@model PrivacyModel
+@{
+    ViewData["Title"] = "Privacy & Health Data Governance";
+}
+
+<div class="container py-4">
+    <!-- Header -->
+    <div class="border-bottom pb-3 mb-4">
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1">HIPAA & GDPR</span>
+            <span class="badge bg-secondary-subtle text-secondary border px-2 py-1">HL7 FHIR R4 Standard</span>
+        </div>
+        <h2 class="h3 fw-bold text-dark mb-1">Privacy Policy & Clinical Data Governance</h2>
+        <p class="text-muted small mb-0">Last updated: September 7, 2026 &bull; Version 2.4.0</p>
+    </div>
+
+    <div class="row g-4">
+        <!-- Main Content -->
+        <div class="col-lg-8">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-body p-4">
+                    <h5 class="fw-bold text-primary mb-3">1. Scope and Protected Health Information (PHI)</h5>
+                    <p class="text-secondary">
+                        This application acts as a secure front-end client interfacing with Health Level Seven (HL7&reg;) 
+                        Fast Healthcare Interoperability Resources (FHIR&reg;) R4 servers. All clinical records—including 
+                        patient demographics, blood pressure observations (LOINC 85354-9), active conditions, and medication requests—are 
+                        transmitted directly over encrypted transport channels.
+                    </p>
+
+                    <h5 class="fw-bold text-primary mt-4 mb-3">2. Zero-Local-Storage Architecture</h5>
+                    <p class="text-secondary">
+                        To maintain clinical privacy compliance, this web application implements a stateless architecture:
+                    </p>
+                    <ul class="text-secondary">
+                        <li><strong>No Local Persistence:</strong> Patient records and physiological readings are never written to local browser caches, indexed databases, or persistent cookies.</li>
+                        <li><strong>In-Transit Pass-Through:</strong> The backend proxy executes on-the-fly request forwarding, injecting authorization credentials without caching payloads to server disks.</li>
+                        <li><strong>Episodic Rendering:</strong> Data lives in client browser memory solely for the duration of the active viewing session.</li>
+                    </ul>
+
+                    <h5 class="fw-bold text-primary mt-4 mb-3">3. Security Standards & Data Encryption</h5>
+                    <div class="row g-3 mt-1">
+                        <div class="col-sm-6">
+                            <div class="border rounded p-3 h-100 bg-light">
+                                <h6 class="fw-bold mb-1">TLS 1.3 Transport</h6>
+                                <p class="text-muted small mb-0">All API proxy traffic between browser, application gateway, and upstream FHIR endpoints is strictly encrypted.</p>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="border rounded p-3 h-100 bg-light">
+                                <h6 class="fw-bold mb-1">OAuth 2.0 Bearer Tokens</h6>
+                                <p class="text-muted small mb-0">Server access utilizes SMART on FHIR scoped tokens, restricting read and write operations to designated resources.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar / Compliance Badges -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm border-0 mb-4 bg-light">
+                <div class="card-body p-4">
+                    <h6 class="text-uppercase fw-bold text-muted small mb-3">Compliance Snapshot</h6>
+                    
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="me-3 fs-4 text-success">&#10003;</div>
+                        <div>
+                            <div class="fw-semibold">HIPAA Security Rule</div>
+                            <small class="text-muted">Technical safeguards enabled</small>
+                        </div>
+                    </div>
+
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="me-3 fs-4 text-success">&#10003;</div>
+                        <div>
+                            <div class="fw-semibold">Audit Logging</div>
+                            <small class="text-muted">HTTP trace IDs per request</small>
+                        </div>
+                    </div>
+
+                    <div class="d-flex align-items-center">
+                        <div class="me-3 fs-4 text-success">&#10003;</div>
+                        <div>
+                            <div class="fw-semibold">Data Minimization</div>
+                            <small class="text-muted">Payloads restricted to requested IDs</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 bg-primary text-white shadow-sm p-4">
+                <h6 class="fw-bold mb-2">Need Data Governance Assistance?</h6>
+                <p class="small text-white-50 mb-3">Contact the Clinical Informatics and Privacy Officer for access request inquiries or data disclosure logs.</p>
+                <a href="mailto:privacy@fhir-health.org" class="btn btn-light btn-sm text-primary fw-semibold">
+                    Contact Privacy Office
+                </a>
+            </div>
+        </div>
+    </div>
+</div>

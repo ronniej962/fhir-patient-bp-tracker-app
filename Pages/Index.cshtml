@@ -1,0 +1,350 @@
+﻿@page
+@{
+    ViewData["Title"] = "FHIR R4 Patient Manager";
+}
+
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="h3 mb-0">Patient Registry</h2>
+            <small class="text-muted">Direct FHIR R4 Integration via Backend Proxy</small>
+        </div>
+        <button class="btn btn-primary" onclick="openCreateModal()">
+            + Register New Patient
+        </button>
+    </div>
+
+    <!-- Alert Banner -->
+    <div id="alertBox" class="alert alert-danger d-none alert-dismissible fade show" role="alert">
+        <span id="alertMessage"></span>
+        <button type="button" class="btn-close" onclick="hideAlert()"></button>
+    </div>
+
+    <!-- Search Box -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form id="searchForm" onsubmit="event.preventDefault(); fetchPatients();" class="row g-2 align-items-center">
+                <div class="col-sm-9 col-md-10">
+                    <input type="text" id="searchInput" class="form-control" placeholder="Search patients by name (partial match supported)...">
+                </div>
+                <div class="col-sm-3 col-md-2 d-flex gap-2">
+                    <button type="submit" class="btn btn-secondary w-100">Search</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="resetSearch()">Reset</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingState" class="text-center py-5 d-none">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading patients...</span>
+        </div>
+        <p class="mt-2 text-muted">Querying FHIR server...</p>
+    </div>
+
+    <!-- Patient Table -->
+    <div id="tableContainer" class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Full Name</th>
+                            <th>Gender</th>
+                            <th>Date of Birth</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="patientTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Create & Edit Patient -->
+<div class="modal fade" id="patientModal" tabindex="-1" aria-labelledby="modalTitle" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">Register New Patient</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="patientForm" onsubmit="handleFormSubmit(event)" novalidate>
+                <div class="modal-body">
+                    <input type="hidden" id="patientId">
+
+                    <div class="mb-3">
+                        <label for="givenName" class="form-label">Given Name(s) <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="givenName" required placeholder="e.g., John">
+                        <div class="invalid-feedback">Given name is required.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="familyName" class="form-label">Family Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="familyName" required placeholder="e.g., Doe">
+                        <div class="invalid-feedback">Family name is required.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="gender" class="form-label">Gender <span class="text-danger">*</span></label>
+                        <select class="form-select" id="gender" required>
+                            <option value="">-- Select Gender --</option>
+                            <option value="male">male</option>
+                            <option value="female">female</option>
+                            <option value="other">other</option>
+                            <option value="unknown">unknown</option>
+                        </select>
+                        <div class="invalid-feedback">Please select a gender.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="birthDate" class="form-label">Date of Birth <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control" id="birthDate" required>
+                        <div class="invalid-feedback">Valid birth date (YYYY-MM-DD) is required.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" id="saveButton" class="btn btn-primary">Save to FHIR</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    const PROXY_BASE = '/api/fhir';
+    let modalInstance = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        modalInstance = new bootstrap.Modal(document.getElementById('patientModal'));
+        fetchPatients();
+    });
+
+    async function fetchPatients() {
+        showLoading(true);
+        hideAlert();
+
+        const searchName = document.getElementById('searchInput').value.trim();
+        let url = `${PROXY_BASE}/Patient?_sort=-_lastUpdated&_count=50`;
+        if (searchName) {
+            url += `&name=${encodeURIComponent(searchName)}`;
+        }
+
+        try {
+            const response = await fetch(url, {
+                headers: { 'Accept': 'application/fhir+json, application/json' }
+            });
+
+            if (!response.ok) {
+                const errData = await response.text();
+                throw new Error(`Server status ${response.status}: ${errData}`);
+            }
+
+            const bundle = await response.json();
+            renderPatientTable(bundle);
+        } catch (err) {
+            showAlert(`Failed to fetch patients: ${err.message}`);
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    function renderPatientTable(bundle) {
+        const tbody = document.getElementById('patientTableBody');
+        tbody.innerHTML = '';
+
+        const entries = bundle.entry || [];
+        if (entries.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-muted">No patients found.</td></tr>`;
+            return;
+        }
+
+        entries.forEach(entry => {
+            const patient = entry.resource;
+            if (!patient || patient.resourceType !== 'Patient') return;
+
+            // Extract Name components
+            const nameObj = (patient.name && patient.name.length > 0) ? patient.name[0] : null;
+            const given = (nameObj && Array.isArray(nameObj.given)) ? nameObj.given.join(' ') : '';
+            const family = (nameObj && nameObj.family) ? nameObj.family : '';
+            const fullName = `${given} ${family}`.trim() || 'Unnamed';
+
+            // Capitalize first letter of Gender (e.g., Male, Female, Other)
+            const rawGender = patient.gender || 'unknown';
+            const displayGender = rawGender.charAt(0).toUpperCase() + rawGender.slice(1);
+            const genderBadgeClass = getGenderBadgeClass(rawGender);
+
+            const birthDate = patient.birthDate || 'Not recorded';
+            const patientUrl = `/patient/${encodeURIComponent(patient.id || '')}`;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>
+                    <a href="${patientUrl}" class="text-decoration-none fw-bold text-primary">
+                        ${escapeHtml(fullName)}
+                    </a>
+                </td>
+                <td><span class="badge ${genderBadgeClass}">${escapeHtml(displayGender)}</span></td>
+                <td>${escapeHtml(birthDate)}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary" data-patient='${escapeHtml(JSON.stringify(patient))}'>
+                        Edit
+                    </button>
+                </td>
+            `;
+            
+            tr.querySelector('button').addEventListener('click', (e) => {
+                const data = JSON.parse(e.currentTarget.getAttribute('data-patient'));
+                openEditModal(data);
+            });
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    function openCreateModal() {
+        const form = document.getElementById('patientForm');
+        form.classList.remove('was-validated');
+        form.reset();
+        document.getElementById('patientId').value = '';
+        document.getElementById('modalTitle').textContent = 'Register New Patient';
+        document.getElementById('saveButton').textContent = 'Register Patient';
+        modalInstance.show();
+    }
+
+    function openEditModal(patient) {
+        const form = document.getElementById('patientForm');
+        form.classList.remove('was-validated');
+        form.reset();
+
+        document.getElementById('patientId').value = patient.id || '';
+        document.getElementById('modalTitle').textContent = `Edit Patient (ID: ${patient.id})`;
+        document.getElementById('saveButton').textContent = 'Save Changes';
+
+        if (patient.name && patient.name.length > 0) {
+            const nameObj = patient.name[0];
+            document.getElementById('givenName').value = Array.isArray(nameObj.given) ? nameObj.given.join(' ') : '';
+            document.getElementById('familyName').value = nameObj.family || '';
+        }
+
+        document.getElementById('gender').value = patient.gender || 'unknown';
+        document.getElementById('birthDate').value = patient.birthDate || '';
+
+        modalInstance.show();
+    }
+
+    async function handleFormSubmit(event) {
+        event.preventDefault();
+        const form = document.getElementById('patientForm');
+
+        if (!form.checkValidity()) {
+            event.stopPropagation();
+            form.classList.add('was-validated');
+            return;
+        }
+
+        const id = document.getElementById('patientId').value;
+        const givenText = document.getElementById('givenName').value.trim();
+        const familyText = document.getElementById('familyName').value.trim();
+        const genderVal = document.getElementById('gender').value;
+        const birthDateVal = document.getElementById('birthDate').value;
+
+        const patientResource = {
+            resourceType: "Patient",
+            name: [
+                {
+                    use: "official",
+                    family: familyText,
+                    given: givenText.split(/\s+/).filter(Boolean)
+                }
+            ],
+            gender: genderVal,
+            birthDate: birthDateVal
+        };
+
+        const isEdit = Boolean(id);
+        if (isEdit) {
+            patientResource.id = id;
+        }
+
+        const url = isEdit ? `${PROXY_BASE}/Patient/${encodeURIComponent(id)}` : `${PROXY_BASE}/Patient`;
+        const method = isEdit ? 'PUT' : 'POST';
+
+        const saveBtn = document.getElementById('saveButton');
+        saveBtn.disabled = true;
+        saveBtn.innerText = 'Saving...';
+
+        try {
+            const response = await fetch(url, {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/fhir+json',
+                    'Accept': 'application/fhir+json, application/json'
+                },
+                body: JSON.stringify(patientResource)
+            });
+
+            if (!response.ok) {
+                const errorPayload = await response.text();
+                throw new Error(`Server returned ${response.status}: ${errorPayload}`);
+            }
+
+            modalInstance.hide();
+            await fetchPatients();
+        } catch (err) {
+            showAlert(`Failed to save patient: ${err.message}`);
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.innerText = isEdit ? 'Save Changes' : 'Register Patient';
+        }
+    }
+
+    function resetSearch() {
+        document.getElementById('searchInput').value = '';
+        fetchPatients();
+    }
+
+    function showLoading(isLoading) {
+        document.getElementById('loadingState').classList.toggle('d-none', !isLoading);
+        document.getElementById('tableContainer').classList.toggle('d-none', isLoading);
+    }
+
+    function showAlert(msg) {
+        const alertBox = document.getElementById('alertBox');
+        document.getElementById('alertMessage').textContent = msg;
+        alertBox.classList.remove('d-none');
+    }
+
+    function hideAlert() {
+        document.getElementById('alertBox').classList.add('d-none');
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function getGenderBadgeClass(gender) {
+    switch ((gender || '').toLowerCase()) {
+        case 'male':
+            return 'bg-primary';       // Blue
+        case 'female':
+            return 'bg-danger-subtle text-danger border border-danger-subtle'; // Soft Pink/Rose
+        case 'other':
+            return 'bg-info text-dark'; // Cyan
+        default:
+            return 'bg-secondary';     // Gray for unknown or unlisted
+    }
+}
+</script>
+}

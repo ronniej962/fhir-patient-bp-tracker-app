@@ -1,0 +1,13 @@
+services:
+  fhir-patient-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fhir-patient-app
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - FhirSettings__ServerUrl=${FHIR_SERVER_URL}
+      - FhirSettings__BearerToken=${FHIR_BEARER_TOKEN}
+    restart: unless-stopped
